@@ -51,6 +51,46 @@ app.post("/api/auth/login",async(req,res)=>{
  }catch(e){console.error(e);res.status(503).json({error:"Login unavailable"})}
 });
 app.post("/api/auth/logout",session,async(req,res)=>{const token=req.get("Authorization").slice(7);await db.query("DELETE FROM contribute_sessions WHERE token_hash=$1",[crypto.createHash("sha256").update(token).digest("hex")]);res.json({ok:true})});
+const dropboxReady=()=>Boolean(process.env.DROPBOX_APP_KEY&&process.env.DROPBOX_APP_SECRET&&process.env.DROPBOX_REFRESH_TOKEN);
+const safeName=s=>String(s||"contribution").replace(/[^a-zA-Z0-9._ -]/g,"_").slice(0,90);
+const dropboxFolder=id=>({ "news-int":"News/Interviews","news-bul":"News/Bulletins","breaking":"Breaking News","sport":"Sport","features":"Features","production":"Production" })[id];
+async function dropboxToken(){
+ const auth=Buffer.from(process.env.DROPBOX_APP_KEY+":"+process.env.DROPBOX_APP_SECRET).toString("base64");
+ const r=await fetch("https://api.dropboxapi.com/oauth2/token",{method:"POST",headers:{"Authorization":"Basic "+auth,"Content-Type":"application/x-www-form-urlencoded"},body:new URLSearchParams({grant_type:"refresh_token",refresh_token:process.env.DROPBOX_REFRESH_TOKEN})});
+ if(!r.ok)throw Error("Dropbox token refresh failed: "+r.status);
+ return (await r.json()).access_token;
+}
+async function dropboxUpload(token,local,remote){
+ const data=fs.readFileSync(local),arg={path:remote,mode:"add",autorename:true,mute:false};
+ const r=await fetch("https://content.dropboxapi.com/2/files/upload",{method:"POST",headers:{"Authorization":"Bearer "+token,"Dropbox-API-Arg":JSON.stringify(arg),"Content-Type":"application/octet-stream"},body:data});
+ if(!r.ok)throw Error("Dropbox upload failed: "+r.status+" "+(await r.text()).slice(0,250));
+ return r.json();
+}
+// The initial Dropbox authorisation is gated by a separate operator-held setup key.
+const redirect=()=> "https://"+(process.env.RAILWAY_PUBLIC_DOMAIN||"signalflow-contribute-production.up.railway.app")+"/auth/dropbox/callback";
+app.get("/auth/dropbox/start",(req,res)=>{
+ if(!process.env.DROPBOX_SETUP_KEY)return res.status(503).send("Set DROPBOX_SETUP_KEY in the Contribute Railway service first.");
+ if(typeof req.query.key!=="string"||!crypto.timingSafeEqual(Buffer.from(crypto.createHash("sha256").update(req.query.key).digest()),Buffer.from(crypto.createHash("sha256").update(process.env.DROPBOX_SETUP_KEY).digest())))return res.status(403).send("Invalid setup key");
+ const expires=Date.now()+600000,nonce=crypto.randomBytes(16).toString("hex"),payload=expires+"."+nonce;
+ const sig=crypto.createHmac("sha256",process.env.DROPBOX_SETUP_KEY).update(payload).digest("hex");
+ const u=new URL("https://www.dropbox.com/oauth2/authorize");
+ u.search=new URLSearchParams({client_id:process.env.DROPBOX_APP_KEY,redirect_uri:redirect(),response_type:"code",token_access_type:"offline",state:payload+"."+sig}).toString();
+ res.redirect(u.toString());
+});
+app.get("/auth/dropbox/callback",async(req,res)=>{
+ try{
+  if(!process.env.DROPBOX_SETUP_KEY||typeof req.query.state!=="string"||typeof req.query.code!=="string")return res.status(400).send("Invalid callback");
+  const [expiry,nonce,sig]=req.query.state.split("."),payload=expiry+"."+nonce;
+  const expected=crypto.createHmac("sha256",process.env.DROPBOX_SETUP_KEY).update(payload).digest("hex");
+  if(!sig||sig.length!==expected.length||!crypto.timingSafeEqual(Buffer.from(sig),Buffer.from(expected))||Date.now()>Number(expiry))return res.status(403).send("Expired or invalid state");
+  const auth=Buffer.from(process.env.DROPBOX_APP_KEY+":"+process.env.DROPBOX_APP_SECRET).toString("base64");
+  const r=await fetch("https://api.dropboxapi.com/oauth2/token",{method:"POST",headers:{"Authorization":"Basic "+auth,"Content-Type":"application/x-www-form-urlencoded"},body:new URLSearchParams({code:req.query.code,grant_type:"authorization_code",redirect_uri:redirect()})});
+  if(!r.ok)throw Error("Dropbox authorisation failed");
+  const result=await r.json();if(!result.refresh_token)throw Error("Dropbox did not return a refresh token");
+  res.set("Cache-Control","no-store");res.type("html").send('<!doctype html><meta name="referrer" content="no-referrer"><title>Dropbox connected</title><h2>Dropbox authorisation successful</h2><p>Copy this refresh token into a private Railway variable named <b>DROPBOX_REFRESH_TOKEN</b>. Do not share it or commit it to GitHub.</p><textarea readonly style="width:95%;height:110px">'+result.refresh_token.replace(/[&<>"]/g,"")+'</textarea><p>After saving, close this tab. Remove DROPBOX_SETUP_KEY from Railway when finished.</p>');
+ }catch(e){console.error("Dropbox OAuth callback failed",e.message);res.status(502).send("Dropbox connection failed. Check the redirect URI and retry.");}
+});
+
 app.post("/api/upload",session,upload.single("file"),async(req,res)=>{
  const d=destinations.find(x=>x.id===req.body.destination);
  if(!d||!req.user.folders.includes(d.id)){if(req.file)fs.unlinkSync(req.file.path);return res.status(403).json({error:"Destination not permitted"});}
