@@ -8,12 +8,12 @@ fs.mkdirSync("uploads",{recursive:true});
 const upload=multer({dest:"uploads/",limits:{fileSize:250*1024*1024}});
 app.use(express.json()); app.use(express.static("public"));
 const destinations=[
-{id:"news-int",name:"News / Interviews",types:["audio","photo","video"]},
-{id:"news-bul",name:"News / Bulletins",types:["audio"]},
-{id:"breaking",name:"Breaking News",types:["audio","photo","video"]},
-{id:"sport",name:"Sport",types:["audio","photo","video"]},
-{id:"features",name:"Features",types:["audio","photo","video"]},
-{id:"production",name:"Production",types:["audio"]}
+{id:"news-int",name:"News / Interviews",notesPrompt:"Include the interviewee’s name, role and a brief summary of the interview.",notesHelp:"Mention any particularly useful quotes or time-sensitive information.",notesRequired:false,types:["audio","photo","video"]},
+{id:"news-bul",name:"News / Bulletins",notesPrompt:"Include the bulletin time, main stories covered and any important information for the newsreader.",notesHelp:"Include any updates or corrections the newsroom needs to know.",notesRequired:false,types:["audio"]},
+{id:"breaking",name:"Breaking News",notesPrompt:"What happened, where and when? Include sources and any details requiring verification.",notesHelp:"Clearly identify any information that is not yet confirmed.",notesRequired:false,types:["audio","photo","video"]},
+{id:"sport",name:"Sport",notesPrompt:"Include the teams or event, score if relevant, and a brief summary.",notesHelp:"Add any relevant names or key moments.",notesRequired:false,types:["audio","photo","video"]},
+{id:"features",name:"Features",notesPrompt:"Summarise the feature and identify any contributors.",notesHelp:"Add context that will help producers use this material.",notesRequired:false,types:["audio","photo","video"]},
+{id:"production",name:"Production",notesPrompt:"Describe this recording and how it should be used.",notesHelp:"Include any relevant production instructions.",notesRequired:false,types:["audio"]}
 ];
 const users=[{id:"trial",name:"Trial Reporter",email:"reporter@signalflow.local",role:"News Team",folders:["news-int","news-bul","breaking","features"]}];
 const files=[];
