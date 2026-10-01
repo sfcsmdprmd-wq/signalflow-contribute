@@ -91,6 +91,16 @@ app.get("/auth/dropbox/callback",async(req,res)=>{
  }catch(e){console.error("Dropbox OAuth callback failed",e.message);res.status(502).send("Dropbox connection failed. Check the redirect URI and retry.");}
 });
 
+app.get("/api/config",session,(req,res)=>res.json({trial:false,user:publicUser(req.user),destinations:destinations.filter(d=>req.user.folders.includes(d.id))}));
+app.get("/api/files",session,async(req,res)=>{try{const q=await db.query("SELECT id,title,destination,type,size,delivered_at AS \"deliveredAt\", 'Delivered to Dropbox' AS status FROM contribute_files WHERE user_id=$1 OR $2='admin' ORDER BY delivered_at DESC LIMIT 100",[req.user.id,req.user.role]);res.json(q.rows)}catch(e){res.status(503).json({error:"Files unavailable"})}});
+app.get("/api/admin",session,async(req,res)=>{if(req.user.role!=="admin")return res.status(403).json({error:"Administrator only"});const q=await db.query("SELECT id,email,role,folders FROM contribute_users ORDER BY email");res.json({users:q.rows,destinations})});
+app.post("/api/admin/users",session,async(req,res)=>{
+ if(req.user.role!=="admin")return res.status(403).json({error:"Administrator only"});
+ const email=String(req.body.email||"").trim().toLowerCase(),password=req.body.password,folders=req.body.folders;
+ if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)||typeof password!=="string"||password.length<14||password.length>128||!Array.isArray(folders)||!folders.every(x=>destinations.some(d=>d.id===x)))return res.status(400).json({error:"Valid email, 14+ character password and permitted folders required"});
+ const salt=crypto.randomBytes(24).toString("hex");
+ try{const q=await db.query("INSERT INTO contribute_users(id,email,password_hash,salt,role,folders) VALUES($1,$2,$3,$4,'reporter',$5) RETURNING id,email,role,folders",[crypto.randomUUID(),email,hashPassword(password,salt),salt,JSON.stringify(folders)]);res.json(q.rows[0])}catch(e){res.status(409).json({error:"Email already registered"})}
+});
 app.post("/api/upload",session,upload.single("file"),async(req,res)=>{
  const d=destinations.find(x=>x.id===req.body.destination);
  if(!d||!req.user.folders.includes(d.id)){if(req.file)fs.unlinkSync(req.file.path);return res.status(403).json({error:"Destination not permitted"});}
