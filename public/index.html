@@ -11,11 +11,11 @@
 <p class="sub" style="font-size:12px">Only the selected section will be uploaded. If your browser cannot decode this recording, the original will be sent unchanged.</p></div><label>Title (optional)</label><input id="title" placeholder="e.g. Interview with..."><label>Notes (optional)</label><textarea id="notes" placeholder="Anything the newsroom should know"></textarea><p class="sub" id="notesHelp" style="font-size:12px;margin:6px 0"></p><label>Destination</label><select id="dest"></select><button class="primary" onclick="sendCurrent()">➤ Save & Send</button></div></section>
 <section id="sending" class="hidden"><div class="sendbox"><h2 id="sendTitle">Sending…</h2><div id="sendIcon" style="font-size:65px">☁︎↑</div><p id="sendText">Saving file securely…</p><div class="card"><div id="steps">● File saved on device<br>○ Uploading to Dropbox<br>○ Waiting for confirmation</div></div></div></section>
 <section id="files" class="hidden"><h2>My Files</h2><p class="sub">Trial submissions from this running service.</p><div id="fileList"></div></section>
-<section id="admin" class="hidden admin"><h2>Admin</h2><div class="trial">Trial admin preview — editing will be added after the workflow is tested.</div><div class="card"><h3>Trial user</h3><div id="userInfo"></div></div><div class="card"><h3>Folder access</h3><table id="perm"></table></div></section>
+<section id="admin" class="hidden admin"><h2>Team accounts</h2><div class="card"><h3>Create reporter</h3><p class="sub">Give each reporter their own email, temporary password (at least 14 characters), and access to the folders they need.</p><label>Email</label><input id="reporterEmail" type="email" autocomplete="off" placeholder="reporter@example.com"><label>Temporary password</label><input id="reporterPassword" type="password" autocomplete="new-password" minlength="14" placeholder="At least 14 characters"><h3>Allowed folders</h3><div id="reporterFolders"></div><p id="reporterResult" role="status"></p><button onclick="createReporter()">Create reporter account</button></div><div class="card"><h3>Existing accounts</h3><div id="teamAccounts"></div></div><div class="card"><button onclick="logout()">Sign out on this device</button></div></section>
 <input id="picker" type="file" class="hidden">
 </div><nav id="appNav" class="hidden"><button class="navbtn active" onclick="show('home')">⌂<br>Home</button><button class="navbtn" onclick="loadFiles()">▤<br>My Files</button><button class="navbtn" onclick="loadAdmin()">⚙<br>Admin</button></nav>
 <script>
-let authToken=sessionStorage.getItem("contribute_token")||"";
+let authToken=localStorage.getItem("contribute_token")||"";
 const api=(url,opts={})=>fetch(url,{...opts,headers:{...opts.headers,...(authToken?{Authorization:"Bearer "+authToken}:{})}});
 async function setupAdmin(){
  const r=await fetch("/api/auth/bootstrap",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({setupKey:$("setupKey").value,password:$("setupPassword").value})});
@@ -25,7 +25,7 @@ async function setupAdmin(){
 async function login(){
  const r=await fetch("/api/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email:$("loginEmail").value,password:$("loginPassword").value})});
  const data=await r.json();if(!r.ok){$("loginError").textContent=data.error||"Could not sign in";return}
- authToken=data.token;sessionStorage.setItem("contribute_token",authToken);$("loginPassword").value="";await init();
+ authToken=data.token;localStorage.setItem("contribute_token",authToken);$("loginPassword").value="";await init();
 }
 let cfg,currentBlob,currentType='audio',mediaRecorder,chunks=[],started,clock,ctx,analyser,source,stream,elapsed=0,segmentStart=0;
 const $=id=>document.getElementById(id);
@@ -50,7 +50,7 @@ async function init(){
  show("login");return
 }
  const response=await api("/api/config");
- if(!response.ok){authToken="";sessionStorage.removeItem("contribute_token");show("login");return}
+ if(!response.ok){authToken="";localStorage.removeItem("contribute_token");show("login");return}
  cfg=await response.json();$("appNav").classList.remove("hidden");$("login").classList.add("hidden");show("home");
   const opts=cfg.destinations.map(d=>'<option value="'+d.id+'">'+d.name+'</option>').join('');$('dest').innerHTML=opts;$('dest').addEventListener('change',updateNotesGuidance);updateNotesGuidance(); $('meter').innerHTML='<i></i>'.repeat(18)}
 function updateNotesGuidance(){const d=cfg?.destinations.find(x=>x.id===$('dest').value);$('notes').placeholder=d?.notesPrompt||'Include any useful details about this contribution.';$('notesHelp').textContent=d?.notesHelp||'';$('notes').required=!!d?.notesRequired;}
@@ -108,6 +108,22 @@ if(trimReady&&originalAudio===currentBlob&&(trimStart>0.005||trimEnd<decodedAudi
 }
 fd.append('file',sendingBlob,'contribution-'+Date.now()+extension);fd.append('type',currentType==='file'?(currentBlob.type.startsWith('image')?'photo':currentBlob.type.startsWith('video')?'video':'audio'):currentType);fd.append('title',$('title').value);fd.append('notes',$('notes').value);fd.append('destination',$('dest').value);setTimeout(()=>{$('steps').innerHTML='✓ File saved<br>● Uploading to trial server<br>○ Waiting for confirmation'},500);let r=await api('/api/upload',{method:'POST',body:fd});if(!r.ok){uploadInProgress=false;let failure=await r.json().catch(()=>({}));$('sendText').textContent=failure.error||'Could not send — your file has not been marked delivered.';return}let x=await r.json();$('sendTitle').textContent='Delivered';$('sendIcon').innerHTML='<span class="check">✓</span>';$('sendText').innerHTML='Dropbox confirmed delivery to <b>'+x.destination+'</b>.';$('steps').innerHTML='✓ File saved<br>✓ Dropbox received file<br>✓ Delivery confirmed<br><br><span class="sub">Delivery verified by Dropbox.</span>';currentBlob=null;resetEditor();uploadInProgress=false}
 async function loadFiles(){show('files');let a=await api('/api/files').then(r=>r.json());$('fileList').innerHTML=a.length?a.map(x=>'<div class="card fileitem"><div class="between row"><b>'+x.title+'</b><span class="ok">✓ '+x.status+'</span></div><div class="sub">'+x.type+' · '+x.destination+' · '+new Date(x.deliveredAt).toLocaleString()+'</div></div>').join(''):'<div class="card sub">No submissions yet.</div>'}
-async function loadAdmin(){show('admin');let response=await api('/api/admin');if(!response.ok){$('userInfo').textContent='Administrator access required';return}let a=await response.json(),u=a.users[0];$('userInfo').innerHTML='<b>'+u.name+'</b><br><span class="sub">'+u.role+'</span>';$('perm').innerHTML='<tr><th>Destination</th><th>Audio</th><th>Photo</th><th>Video</th></tr>'+a.destinations.map(d=>'<tr><td>'+d.name+'</td>'+['audio','photo','video'].map(t=>'<td>'+(u.folders.includes(d.id)&&d.types.includes(t)?'☑':'☐')+'</td>').join('')+'</tr>').join('')}
+const htmlEscape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let adminData=null;
+async function loadAdmin(){
+ show('admin');const response=await api('/api/admin');
+ if(!response.ok){$('teamAccounts').textContent='Administrator access required';return}
+ adminData=await response.json();
+ $('reporterFolders').innerHTML=adminData.destinations.map(d=>'<label style="display:block;margin:10px 0"><input type="checkbox" class="folderPermission" value="'+htmlEscape(d.id)+'"> '+htmlEscape(d.name)+'</label>').join('');
+ $('teamAccounts').innerHTML=adminData.users.map(u=>'<div style="padding:12px 0;border-bottom:1px solid #555"><strong>'+htmlEscape(u.email)+'</strong> ('+htmlEscape(u.role)+')<br><span class="sub">'+htmlEscape(u.folders.map(id=>adminData.destinations.find(d=>d.id===id)?.name||id).join(', '))+'</span></div>').join('');
+}
+async function createReporter(){
+ const email=$('reporterEmail').value.trim(),password=$('reporterPassword').value,folders=[...document.querySelectorAll('.folderPermission:checked')].map(x=>x.value);
+ if(!email||password.length<14||!folders.length){$('reporterResult').textContent='Enter an email, a password of at least 14 characters and select at least one folder.';return}
+ const r=await api('/api/admin/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password,folders})});
+ const result=await r.json().catch(()=>({}));$('reporterResult').textContent=r.ok?'Account created. Share the temporary password privately with the reporter.':(result.error||'Could not create account.');
+ if(r.ok){$('reporterEmail').value='';$('reporterPassword').value='';await loadAdmin()}
+}
+async function logout(){await api('/api/auth/logout',{method:'POST'}).catch(()=>{});authToken='';localStorage.removeItem('contribute_token');$('appNav').classList.add('hidden');show('login')}
 init();
 </script></body></html>
