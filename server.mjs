@@ -35,7 +35,7 @@ app.post("/api/auth/bootstrap",async(req,res)=>{
  if(req.body.setupKey!==process.env.ADMIN_SETUP_KEY)return res.status(403).json({error:"Incorrect setup key"});
  if(typeof req.body.password!=="string"||req.body.password.length<14||req.body.password.length>128)return res.status(400).json({error:"Password must contain 14–128 characters"});
  const salt=crypto.randomBytes(24).toString("hex");
- await db.query("INSERT INTO contribute_users(id,email,password_hash,salt,role,folders) VALUES($1,$2,$3,$4,$5,$6)",[crypto.randomUUID(),ADMIN_EMAIL,hashPassword(req.body.password,salt),salt,"admin",destinations.map(d=>d.id)]);
+ await db.query("INSERT INTO contribute_users(id,email,password_hash,salt,role,folders) VALUES($1,$2,$3,$4,$5,$6)",[crypto.randomUUID(),ADMIN_EMAIL,hashPassword(req.body.password,salt),salt,"admin",JSON.stringify(destinations.map(d=>d.id))]);
  res.json({ok:true});
  }catch(e){console.error(e);res.status(503).json({error:"Setup failed"})}
 });
