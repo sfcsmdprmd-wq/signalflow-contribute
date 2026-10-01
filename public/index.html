@@ -16,7 +16,7 @@ function show(id){
  if(uploadInProgress&&id!=='sending'){alert('Please wait for the upload to finish.');return;}
  const leavingReview=!$('review').classList.contains('hidden')&&id!=='review'&&id!=='sending';
  if(leavingReview&&currentBlob){
-  if(!confirm('You have a recording or file that has not been uploaded. Continuing will permanently clear it from this session. Do you want to discard it?'))return;
+  if(!confirm('Your recording has not been uploaded. If you navigate away, it will be lost. Do you want to continue?'))return;
   currentBlob=null;
   $('previewAudio').removeAttribute('src');$('previewAudio').load();
  }
