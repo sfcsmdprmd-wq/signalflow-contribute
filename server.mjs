@@ -1,4 +1,5 @@
 import pg from "pg";
+import sharp from "sharp";
 import express from "express";
 import multer from "multer";
 import fs from "fs";
@@ -7,6 +8,8 @@ import crypto from "crypto";
 const app=express(), PORT=process.env.PORT||3000;
 fs.mkdirSync("uploads",{recursive:true});
 const upload=multer({dest:"uploads/",limits:{fileSize:250*1024*1024}});
+const iconSource=fs.readFileSync("public/contribute-icon.svg");
+await Promise.all([[32,"favicon-32.png"],[180,"apple-touch-icon.png"],[192,"icon-192.png"],[512,"icon-512.png"]].map(async([size,name])=>sharp(iconSource).resize(size,size).png().toFile("public/"+name)));
 app.use(express.json()); app.use(express.static("public"));
 const destinations=[{"id":"local-news","name":"Local News","notesPrompt":"Optional newsroom details","notesRequired":false,"titleRequired":false,"cartNumbers":["901","902"],"types":["audio"]},{"id":"sport","name":"Sport","notesPrompt":"Optional contributor name","notesRequired":false,"titleRequired":true,"types":["audio"]},{"id":"interviews","name":"Interviews","notesPrompt":"Optional description, contributor name or other details","notesRequired":false,"titleRequired":true,"types":["audio"]},{"id":"photo","name":"Photo upload","notesPrompt":"Description, contributor name or other details","notesRequired":true,"titleRequired":true,"types":["photo"]},{"id":"video","name":"Video upload","notesPrompt":"Description, contributor name or other details","notesRequired":true,"titleRequired":true,"types":["video"]}];
 const legacyFolderMap={"news-int":"interviews","news-bul":"local-news","breaking":"local-news","features":"interviews","production":"interviews"};
