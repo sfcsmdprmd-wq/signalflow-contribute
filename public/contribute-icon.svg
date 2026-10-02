@@ -5,7 +5,7 @@
 <filter id="glow" x="-40%" y="-50%" width="180%" height="200%"><feGaussianBlur stdDeviation="9"/></filter>
 </defs>
 <rect x="5" y="5" width="502" height="502" rx="112" fill="url(#tile)" stroke="#323932" stroke-width="5"/>
-<path d="M74 239 H148 L194 132 L246 315 L289 169 L328 239 H438" stroke="#ff9d00" stroke-width="31" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity=".45" filter="url(#glow)"/>
-<path d="M74 239 H148 L194 132 L246 315 L289 169 L328 239 H438" stroke="url(#orange)" stroke-width="24" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-<text x="256" y="408" fill="#ffac17" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-weight="900" font-size="49" textLength="418" lengthAdjust="spacingAndGlyphs">CONTRIBUTE</text>
+<path d="M74 212 H148 L194 117 L246 275 L289 150 L328 212 H438" stroke="#ff9d00" stroke-width="31" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity=".45" filter="url(#glow)"/>
+<path d="M74 212 H148 L194 117 L246 275 L289 150 L328 212 H438" stroke="url(#orange)" stroke-width="24" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="256" y="390" fill="#ffac17" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-weight="900" font-size="43" textLength="405" lengthAdjust="spacingAndGlyphs">CONTRIBUTE</text>
 </svg>
