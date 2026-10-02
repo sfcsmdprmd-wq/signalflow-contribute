@@ -8,19 +8,14 @@ const app=express(), PORT=process.env.PORT||3000;
 fs.mkdirSync("uploads",{recursive:true});
 const upload=multer({dest:"uploads/",limits:{fileSize:250*1024*1024}});
 app.use(express.json()); app.use(express.static("public"));
-const destinations=[
-{id:"news-int",name:"News / Interviews",notesPrompt:"Include the interviewee’s name, role and a brief summary of the interview.",notesHelp:"Mention any particularly useful quotes or time-sensitive information.",notesRequired:false,types:["audio","photo","video"]},
-{id:"news-bul",name:"News / Bulletins",notesPrompt:"Include the bulletin time, main stories covered and any important information for the newsreader.",notesHelp:"Include any updates or corrections the newsroom needs to know.",notesRequired:false,types:["audio"]},
-{id:"breaking",name:"Breaking News",notesPrompt:"What happened, where and when? Include sources and any details requiring verification.",notesHelp:"Clearly identify any information that is not yet confirmed.",notesRequired:false,types:["audio","photo","video"]},
-{id:"sport",name:"Sport",notesPrompt:"Include the teams or event, score if relevant, and a brief summary.",notesHelp:"Add any relevant names or key moments.",notesRequired:false,types:["audio","photo","video"]},
-{id:"features",name:"Features",notesPrompt:"Summarise the feature and identify any contributors.",notesHelp:"Add context that will help producers use this material.",notesRequired:false,types:["audio","photo","video"]},
-{id:"production",name:"Production",notesPrompt:"Describe this recording and how it should be used.",notesHelp:"Include any relevant production instructions.",notesRequired:false,types:["audio"]}
-];
+const destinations=[{"id":"local-news","name":"Local News","notesPrompt":"Optional newsroom details","notesRequired":false,"titleRequired":false,"cartNumbers":["901","902"],"types":["audio"]},{"id":"sport","name":"Sport","notesPrompt":"Optional contributor name","notesRequired":false,"titleRequired":true,"types":["audio"]},{"id":"interviews","name":"Interviews","notesPrompt":"Optional description, contributor name or other details","notesRequired":false,"titleRequired":true,"types":["audio"]},{"id":"photo","name":"Photo upload","notesPrompt":"Description, contributor name or other details","notesRequired":true,"titleRequired":true,"types":["photo"]},{"id":"video","name":"Video upload","notesPrompt":"Description, contributor name or other details","notesRequired":true,"titleRequired":true,"types":["video"]}];
+const legacyFolderMap={"news-int":"interviews","news-bul":"local-news","breaking":"local-news","features":"interviews","production":"interviews"};
+const mappedFolders=folders=>[...new Set((folders||[]).map(x=>legacyFolderMap[x]||x))];
 const ADMIN_EMAIL="dan@blackcountryradio.co.uk";
 const db=process.env.DATABASE_URL?new pg.Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.DATABASE_URL.includes("railway.internal")?false:{rejectUnauthorized:false}}):null;
 const ready=db?db.query(`CREATE TABLE IF NOT EXISTS contribute_users (id UUID PRIMARY KEY, email TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, salt TEXT NOT NULL, role TEXT NOT NULL, folders JSONB NOT NULL, created_at TIMESTAMPTZ DEFAULT NOW()); CREATE TABLE IF NOT EXISTS contribute_sessions (token_hash TEXT PRIMARY KEY, user_id UUID REFERENCES contribute_users(id) ON DELETE CASCADE, expires_at TIMESTAMPTZ NOT NULL); CREATE TABLE IF NOT EXISTS contribute_files (id UUID PRIMARY KEY, user_id UUID REFERENCES contribute_users(id), title TEXT NOT NULL, destination TEXT NOT NULL, type TEXT NOT NULL, size BIGINT NOT NULL, delivered_at TIMESTAMPTZ NOT NULL, dropbox_id TEXT NOT NULL);`).catch(e=>{console.error("Database initialization failed",e.message);throw e}):Promise.resolve();
 const hashPassword=(password,salt)=>crypto.scryptSync(password,salt,64).toString("hex");
-const publicUser=u=>({id:u.id,email:u.email,role:u.role,folders:u.folders});
+const publicUser=u=>({id:u.id,email:u.email,role:u.role,folders:mappedFolders(u.folders)});
 async function session(req,res,next){
  try{await ready;if(!db)return res.status(503).json({error:"Account database is not configured"});
  const token=req.get("Authorization")?.replace(/^Bearer /,"");if(!token)return res.status(401).json({error:"Please sign in"});
@@ -53,7 +48,7 @@ app.post("/api/auth/login",async(req,res)=>{
 app.post("/api/auth/logout",session,async(req,res)=>{const token=req.get("Authorization").slice(7);await db.query("DELETE FROM contribute_sessions WHERE token_hash=$1",[crypto.createHash("sha256").update(token).digest("hex")]);res.json({ok:true})});
 const dropboxReady=()=>Boolean(process.env.DROPBOX_APP_KEY&&process.env.DROPBOX_APP_SECRET&&process.env.DROPBOX_REFRESH_TOKEN);
 const safeName=s=>String(s||"contribution").replace(/[^a-zA-Z0-9._ -]/g,"_").slice(0,90);
-const dropboxFolder=id=>({ "news-int":"News/Interviews","news-bul":"News/Bulletins","breaking":"Breaking News","sport":"Sport","features":"Features","production":"Production" })[id];
+const dropboxFolder=id=>({"local-news":"local news","sport":"sport","interviews":"interviews","photo":"photo","video":"video"})[id];
 async function dropboxToken(){
  const auth=Buffer.from(process.env.DROPBOX_APP_KEY+":"+process.env.DROPBOX_APP_SECRET).toString("base64");
  const r=await fetch("https://api.dropboxapi.com/oauth2/token",{method:"POST",headers:{"Authorization":"Basic "+auth,"Content-Type":"application/x-www-form-urlencoded"},body:new URLSearchParams({grant_type:"refresh_token",refresh_token:process.env.DROPBOX_REFRESH_TOKEN})});
@@ -91,9 +86,9 @@ app.get("/auth/dropbox/callback",async(req,res)=>{
  }catch(e){console.error("Dropbox OAuth callback failed",e.message);res.status(502).send("Dropbox connection failed. Check the redirect URI and retry.");}
 });
 
-app.get("/api/config",session,(req,res)=>res.json({trial:false,user:publicUser(req.user),destinations:destinations.filter(d=>req.user.folders.includes(d.id))}));
+app.get("/api/config",session,(req,res)=>res.json({trial:false,user:publicUser(req.user),destinations:destinations.filter(d=>mappedFolders(req.user.folders).includes(d.id))}));
 app.get("/api/files",session,async(req,res)=>{try{const q=await db.query("SELECT id,title,destination,type,size,delivered_at AS \"deliveredAt\", 'Delivered to Dropbox' AS status FROM contribute_files WHERE user_id=$1 OR $2='admin' ORDER BY delivered_at DESC LIMIT 100",[req.user.id,req.user.role]);res.json(q.rows)}catch(e){res.status(503).json({error:"Files unavailable"})}});
-app.get("/api/admin",session,async(req,res)=>{if(req.user.role!=="admin")return res.status(403).json({error:"Administrator only"});const q=await db.query("SELECT id,email,role,folders FROM contribute_users ORDER BY email");res.json({users:q.rows,destinations})});
+app.get("/api/admin",session,async(req,res)=>{if(req.user.role!=="admin")return res.status(403).json({error:"Administrator only"});const q=await db.query("SELECT id,email,role,folders FROM contribute_users ORDER BY email");res.json({users:q.rows.map(u=>({...u,folders:mappedFolders(u.folders)})),destinations})});
 app.post("/api/admin/users",session,async(req,res)=>{
  if(req.user.role!=="admin")return res.status(403).json({error:"Administrator only"});
  const email=String(req.body.email||"").trim().toLowerCase(),password=req.body.password,folders=req.body.folders;
@@ -103,13 +98,15 @@ app.post("/api/admin/users",session,async(req,res)=>{
 });
 app.post("/api/upload",session,upload.single("file"),async(req,res)=>{
  const d=destinations.find(x=>x.id===req.body.destination);
- if(!d||!req.user.folders.includes(d.id)){if(req.file)fs.unlinkSync(req.file.path);return res.status(403).json({error:"Destination not permitted"});}
+ if(!d||!mappedFolders(req.user.folders).includes(d.id)){if(req.file)fs.unlinkSync(req.file.path);return res.status(403).json({error:"Destination not permitted"});}
  const type=req.body.type||"audio"; if(!d.types.includes(type)){if(req.file)fs.unlinkSync(req.file.path);return res.status(403).json({error:"Media type not permitted"});}
+ const title=String(req.body.title||"").trim(),notes=String(req.body.notes||"").trim(),cart=String(req.body.cartNumber||"");
+ if(d.titleRequired&&!title||d.notesRequired&&!notes||d.cartNumbers&&!d.cartNumbers.includes(cart)){if(req.file)fs.unlinkSync(req.file.path);return res.status(400).json({error:"Please complete the required destination fields"});}
  if(dropboxReady()){
   if(!req.file)return res.status(400).json({error:"File missing"});
 
   try{
-   const token=await dropboxToken(),ext=path.extname(req.file.originalname||"").slice(0,12),name=Date.now()+"-"+crypto.randomBytes(5).toString("hex")+"-"+safeName(req.body.title||"contribution")+ext;
+   const token=await dropboxToken(),ext=path.extname(req.file.originalname||"").slice(0,12),name=(cart?cart+"-":"")+Date.now()+"-"+crypto.randomBytes(5).toString("hex")+"-"+safeName(title||"contribution")+ext;
    const receipt=await dropboxUpload(token,req.file.path,"/"+dropboxFolder(d.id)+"/"+name);
    const item={id:crypto.randomUUID(),title:req.body.title||req.file.originalname,notes:req.body.notes||"",destination:d.name,type,size:req.file.size,deliveredAt:new Date().toISOString(),status:"Delivered to Dropbox",mock:false,dropboxId:receipt.id};
    await db.query("INSERT INTO contribute_files(id,user_id,title,destination,type,size,delivered_at,dropbox_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)",[item.id,req.user.id,item.title,item.destination,item.type,item.size,item.deliveredAt,receipt.id]);return res.json(item);
