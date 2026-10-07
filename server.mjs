@@ -13,6 +13,7 @@ await Promise.all([[32,"favicon-32-v3.png"],[180,"apple-touch-icon-v3.png"],[192
 app.use(express.json()); app.use(express.static(path.resolve("public")));
 app.get("/inbox-demo",(_req,res)=>res.sendFile(path.resolve("public/inbox-demo.html")));
 app.get("/inbox-demo.html",(_req,res)=>res.sendFile(path.resolve("public/inbox-demo.html")));
+app.get("/inbox",(_req,res)=>res.sendFile(path.resolve("public/inbox.html")));
 app.get("/inbox-desktop-demo",(_req,res)=>res.sendFile(path.resolve("public/inbox-desktop-demo.html")));
 app.get("/inbox-desktop-demo.html",(_req,res)=>res.sendFile(path.resolve("public/inbox-desktop-demo.html")));
 const destinations=[{"id":"local-news","name":"Local News","notesPrompt":"Optional newsroom details","notesRequired":false,"titleRequired":false,"cartNumbers":["901","902"],"types":["audio"]},{"id":"sport","name":"Sport","notesPrompt":"Optional contributor name","notesRequired":false,"titleRequired":true,"types":["audio"]},{"id":"interviews","name":"Interviews","notesPrompt":"Optional description, contributor name or other details","notesRequired":false,"titleRequired":true,"types":["audio"]},{"id":"photo","name":"Photo upload","notesPrompt":"Description, contributor name or other details","notesRequired":true,"titleRequired":true,"types":["photo"]},{"id":"video","name":"Video upload","notesPrompt":"Description, contributor name or other details","notesRequired":true,"titleRequired":true,"types":["video"]}];
