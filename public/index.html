@@ -13,7 +13,7 @@
 <section id="files" class="hidden"><h2>My Files</h2><p class="sub">Your submissions delivered to Dropbox.</p><div id="fileList"></div></section>
 <section id="admin" class="hidden admin"><h2>Team accounts</h2><div class="card"><h3>Create reporter</h3><p class="sub">Give each reporter their own email, temporary password (at least 14 characters), and access to the folders they need.</p><label>Email</label><input id="reporterEmail" type="email" autocomplete="off" placeholder="reporter@example.com"><label>Temporary password</label><input id="reporterPassword" type="password" autocomplete="new-password" minlength="14" placeholder="At least 14 characters"><h3>Allowed folders</h3><div id="reporterFolders"></div><p id="reporterResult" role="status"></p><button onclick="createReporter()">Create reporter account</button></div><div class="card"><h3>Existing accounts</h3><div id="teamAccounts"></div></div><div class="card"><button onclick="logout()">Sign out on this device</button></div></section>
 <input id="picker" type="file" class="hidden">
-</div><nav id="appNav" class="hidden"><button class="navbtn active" onclick="show('home')">⌂<br>Home</button><button class="navbtn" onclick="loadFiles()">▤<br>My Files</button><button class="navbtn" onclick="loadAdmin()">⚙<br>Admin</button></nav>
+</div><nav id="appNav" class="hidden"><button class="navbtn active" onclick="show('home')">⌂<br>Home</button><button class="navbtn" onclick="loadFiles()">▤<br>My Files</button><button class="navbtn" onclick="logout()">↪<br>Sign out</button></nav>
 <script>
 let authToken=localStorage.getItem("contribute_token")||"";
 const api=(url,opts={})=>fetch(url,{...opts,headers:{...opts.headers,...(authToken?{Authorization:"Bearer "+authToken}:{})}});
