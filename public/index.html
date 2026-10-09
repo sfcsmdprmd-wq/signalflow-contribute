@@ -23,6 +23,10 @@ const api=async(url,opts={})=>{
   $("appNav").classList.add("hidden");show("login");
   $("loginError").textContent="Your session has expired or your Contribute access has been removed. Please sign in again.";
  }
+ if(response.status===503){
+  const warning=$("loginError");
+  if(warning)warning.textContent="Workspace verification is temporarily unavailable. Your session has been retained; please retry shortly.";
+ }
  return response;
 };
 async function setupAdmin(){
