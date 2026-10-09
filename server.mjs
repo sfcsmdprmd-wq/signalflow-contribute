@@ -21,7 +21,7 @@ const legacyFolderMap={"news-int":"interviews","news-bul":"local-news","breaking
 const mappedFolders=folders=>[...new Set((folders||[]).map(x=>legacyFolderMap[x]||x))];
 const ADMIN_EMAIL="dan@blackcountryradio.co.uk";
 const db=process.env.DATABASE_URL?new pg.Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.DATABASE_URL.includes("railway.internal")?false:{rejectUnauthorized:false}}):null;
-const ready=db?db.query(`CREATE TABLE IF NOT EXISTS contribute_users (id UUID PRIMARY KEY, email TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, salt TEXT NOT NULL, role TEXT NOT NULL, folders JSONB NOT NULL, created_at TIMESTAMPTZ DEFAULT NOW()); CREATE TABLE IF NOT EXISTS contribute_sessions (token_hash TEXT PRIMARY KEY, user_id UUID REFERENCES contribute_users(id) ON DELETE CASCADE, expires_at TIMESTAMPTZ NOT NULL); CREATE TABLE IF NOT EXISTS contribute_files (id UUID PRIMARY KEY, user_id UUID REFERENCES contribute_users(id), title TEXT NOT NULL, destination TEXT NOT NULL, type TEXT NOT NULL, size BIGINT NOT NULL, delivered_at TIMESTAMPTZ NOT NULL, dropbox_id TEXT NOT NULL); ALTER TABLE contribute_files ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT ''; ALTER TABLE contribute_files ADD COLUMN IF NOT EXISTS inbox_status TEXT NOT NULL DEFAULT 'New';`).catch(e=>{console.error("Database initialization failed",e.message);throw e}):Promise.resolve();
+const ready=db?db.query(`CREATE TABLE IF NOT EXISTS contribute_users (id UUID PRIMARY KEY, email TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, salt TEXT NOT NULL, role TEXT NOT NULL, folders JSONB NOT NULL, created_at TIMESTAMPTZ DEFAULT NOW()); CREATE TABLE IF NOT EXISTS contribute_sessions (token_hash TEXT PRIMARY KEY, user_id UUID REFERENCES contribute_users(id) ON DELETE CASCADE, expires_at TIMESTAMPTZ NOT NULL); CREATE TABLE IF NOT EXISTS contribute_files (id UUID PRIMARY KEY, user_id UUID REFERENCES contribute_users(id), title TEXT NOT NULL, destination TEXT NOT NULL, type TEXT NOT NULL, size BIGINT NOT NULL, delivered_at TIMESTAMPTZ NOT NULL, dropbox_id TEXT NOT NULL); ALTER TABLE contribute_files ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT ''; ALTER TABLE contribute_files ADD COLUMN IF NOT EXISTS inbox_status TEXT NOT NULL DEFAULT 'New'; ALTER TABLE contribute_sessions ADD COLUMN IF NOT EXISTS auth_method TEXT NOT NULL DEFAULT 'password';`).catch(e=>{console.error("Database initialization failed",e.message);throw e}):Promise.resolve();
 const hashPassword=(password,salt)=>crypto.scryptSync(password,salt,64).toString("hex");
 const publicUser=u=>({id:u.id,email:u.email,role:u.role,folders:mappedFolders(u.folders)});
 async function session(req,res,next){
@@ -29,7 +29,18 @@ async function session(req,res,next){
  const token=req.get("Authorization")?.replace(/^Bearer /,"");if(!token)return res.status(401).json({error:"Please sign in"});
  const q=await db.query("SELECT u.* FROM contribute_sessions s JOIN contribute_users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>NOW()",[crypto.createHash("sha256").update(token).digest("hex")]);
  if(!q.rows[0])return res.status(401).json({error:"Session expired. Please sign in again"});
- req.user=q.rows[0];next()}catch(e){console.error(e);res.status(503).json({error:"Account service unavailable"})}
+ req.user=q.rows[0];
+ // SSO sessions are revalidated against Workspace on every authenticated API call.
+ // Existing password sessions are retained during migration.
+ if(req.user.email?.endsWith('@blackcountryradio.co.uk')){
+   const sessionMeta=await db.query("SELECT auth_method FROM contribute_sessions WHERE token_hash=$1",[crypto.createHash('sha256').update(token).digest('hex')]).catch(()=>({rows:[]}));
+   if(sessionMeta.rows[0]?.auth_method==='sso'){
+     if(!process.env.SSO_BRIDGE_SECRET)return res.status(503).json({error:'Workspace authorisation unavailable'});
+     const check=await fetch(identityBase+'/api/sso/contribute/verify',{method:'POST',headers:{'Content-Type':'application/json','X-SignalFlow-Bridge':process.env.SSO_BRIDGE_SECRET},body:JSON.stringify({email:req.user.email}),signal:AbortSignal.timeout(12000)});
+     if(!check.ok){await db.query("DELETE FROM contribute_sessions WHERE token_hash=$1",[crypto.createHash('sha256').update(token).digest('hex')]);return res.status(401).json({error:'Workspace access removed or unavailable'})}
+   }
+ }
+ next()}catch(e){console.error(e);res.status(503).json({error:"Account service unavailable"})}
 }
 app.get("/api/auth/status",async(req,res)=>{try{await ready;res.json({configured:!!db,adminEmail:ADMIN_EMAIL})}catch(e){res.status(503).json({error:"Database unavailable"})}});
 app.post("/api/auth/bootstrap",async(req,res)=>{
@@ -79,7 +90,7 @@ app.get('/auth/sso/callback',async(req,res)=>{
     }
     if(!user.rows.length)return res.status(503).send('Could not prepare Contribute account.');
     const token=crypto.randomBytes(32).toString('base64url');
-    await db.query("INSERT INTO contribute_sessions(token_hash,user_id,expires_at) VALUES($1,$2,NOW()+INTERVAL '12 hours')",[crypto.createHash('sha256').update(token).digest('hex'),user.rows[0].id]);
+    await db.query("INSERT INTO contribute_sessions(token_hash,user_id,expires_at,auth_method) VALUES($1,$2,NOW()+INTERVAL '12 hours','sso')",[crypto.createHash('sha256').update(token).digest('hex'),user.rows[0].id]);
     res.cookie('contribute_sso',token,{httpOnly:true,secure:true,sameSite:'lax',path:'/api/auth/sso-session',maxAge:60000});
     res.redirect('/?sso=1');
   }catch(e){console.error('Contribute SSO failed',e.message);res.status(503).send('Workspace sign-in temporarily unavailable. The existing password login is still available.')}
