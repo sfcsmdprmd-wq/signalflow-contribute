@@ -152,6 +152,23 @@ app.get("/api/inbox",session,async(req,res)=>{if(req.user.role!=="admin")return 
 app.patch("/api/inbox/:id/status",session,async(req,res)=>{if(req.user.role!=="admin")return res.status(403).json({error:"Administrator only"});if(!["New","Viewed","Used"].includes(req.body?.status))return res.status(400).json({error:"Invalid status"});try{const q=await db.query("UPDATE contribute_files SET inbox_status=$1 WHERE id=$2 RETURNING id,inbox_status AS status",[req.body.status,req.params.id]);if(!q.rowCount)return res.status(404).json({error:"Not found"});res.json(q.rows[0])}catch(e){console.error(e);res.status(503).json({error:"Update failed"})}});
 app.get("/api/inbox/:id/media",session,async(req,res)=>{if(req.user.role!=="admin")return res.status(403).json({error:"Administrator only"});try{const q=await db.query("SELECT dropbox_id,type FROM contribute_files WHERE id=$1",[req.params.id]);if(!q.rowCount)return res.status(404).json({error:"File not found"});const token=await dropboxToken();const r=await fetch("https://api.dropboxapi.com/2/files/get_temporary_link",{method:"POST",headers:{Authorization:"Bearer "+token,"Content-Type":"application/json"},body:JSON.stringify({path:q.rows[0].dropbox_id})});if(!r.ok)return res.status(502).json({error:"Dropbox file unavailable or already ingested"});const data=await r.json();res.set("Cache-Control","no-store");res.json({url:data.link,type:q.rows[0].type})}catch(e){console.error("Inbox media",e.message);res.status(503).json({error:"Media unavailable"})}});
 app.get("/api/files",session,async(req,res)=>{try{const q=await db.query("SELECT id,title,destination,type,size,delivered_at AS \"deliveredAt\", 'Delivered to Dropbox' AS status FROM contribute_files WHERE user_id=$1 OR $2='admin' ORDER BY delivered_at DESC LIMIT 100",[req.user.id,req.user.role]);res.json(q.rows)}catch(e){res.status(503).json({error:"Files unavailable"})}});
+
+/* Internal permissions management, callable only by My SignalFlow with the bridge secret. */
+function centralAdmin(req,res,next){
+ const supplied=req.get('X-SignalFlow-Bridge')||'',secret=process.env.SSO_BRIDGE_SECRET||'';
+ if(!secret||supplied.length!==secret.length||!crypto.timingSafeEqual(Buffer.from(supplied),Buffer.from(secret)))return res.status(403).json({error:'Unauthorised'});
+ next();
+}
+app.get('/internal/admin/contribute',centralAdmin,async(req,res)=>{
+ try{await ready;const q=await db.query('SELECT email,role,folders FROM contribute_users ORDER BY email');res.set('Cache-Control','no-store').json({users:q.rows.map(u=>({...u,folders:mappedFolders(u.folders)})),destinations:destinations.map(d=>({id:d.id,name:d.name}))})}
+ catch(e){console.error('Central admin read failed',e.message);res.status(503).json({error:'Unavailable'})}
+});
+app.post('/internal/admin/contribute/permissions',centralAdmin,async(req,res)=>{
+ const email=String(req.body.email||'').trim().toLowerCase(),folders=req.body.folders;
+ if(!/^[^@\\s]+@blackcountryradio\\.co\\.uk$/.test(email)||!Array.isArray(folders)||!folders.every(x=>typeof x==='string'&&destinations.some(d=>d.id===x))||new Set(folders).size!==folders.length)return res.status(400).json({error:'Invalid account or destinations'});
+ try{await ready;const q=await db.query('UPDATE contribute_users SET folders=$1 WHERE LOWER(email)=$2 RETURNING email,role,folders',[JSON.stringify(folders),email]);if(!q.rowCount)return res.status(404).json({error:'User must sign in to Contribute once before permissions can be assigned'});res.json({user:q.rows[0]})}
+ catch(e){console.error('Central admin update failed',e.message);res.status(503).json({error:'Unavailable'})}
+});
 app.get("/api/admin",session,async(req,res)=>{if(req.user.role!=="admin")return res.status(403).json({error:"Administrator only"});const q=await db.query("SELECT id,email,role,folders FROM contribute_users ORDER BY email");res.json({users:q.rows.map(u=>({...u,folders:mappedFolders(u.folders)})),destinations})});
 app.post("/api/admin/users",session,async(req,res)=>{
  if(req.user.role!=="admin")return res.status(403).json({error:"Administrator only"});
