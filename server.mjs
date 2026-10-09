@@ -166,7 +166,7 @@ app.get('/internal/admin/contribute',centralAdmin,async(req,res)=>{
 });
 app.post('/internal/admin/contribute/permissions',centralAdmin,async(req,res)=>{
  const email=String(req.body.email||'').trim().toLowerCase(),folders=req.body.folders;
- if(!/^[^@\\s]+@blackcountryradio\\.co\\.uk$/.test(email)||!Array.isArray(folders)||!folders.every(x=>typeof x==='string'&&destinations.some(d=>d.id===x))||new Set(folders).size!==folders.length)return res.status(400).json({error:'Invalid account or destinations'});
+ if(!email.endsWith('@blackcountryradio.co.uk')||email.length>254||email.includes(' ')||!Array.isArray(folders)||!folders.every(x=>typeof x==='string'&&destinations.some(d=>d.id===x))||new Set(folders).size!==folders.length)return res.status(400).json({error:'Invalid account or destinations'});
  try{await ready;const q=await db.query('UPDATE contribute_users SET folders=$1 WHERE LOWER(email)=$2 RETURNING email,role,folders',[JSON.stringify(folders),email]);if(!q.rowCount)return res.status(404).json({error:'User must sign in to Contribute once before permissions can be assigned'});res.json({user:q.rows[0]})}
  catch(e){console.error('Central admin update failed',e.message);res.status(503).json({error:'Unavailable'})}
 });
