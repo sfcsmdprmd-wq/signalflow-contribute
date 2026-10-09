@@ -54,6 +54,49 @@ app.post("/api/auth/login",async(req,res)=>{
  }catch(e){console.error(e);res.status(503).json({error:"Login unavailable"})}
 });
 app.post("/api/auth/logout",session,async(req,res)=>{const token=req.get("Authorization").slice(7);await db.query("DELETE FROM contribute_sessions WHERE token_hash=$1",[crypto.createHash("sha256").update(token).digest("hex")]);res.json({ok:true})});
+
+/* Optional Workspace SSO. Legacy password sessions remain operational. */
+const identityBase='https://my-signalflow-production.up.railway.app';
+app.get('/auth/sso/start',(_req,res)=>res.redirect(identityBase+'/auth/contribute/start'));
+app.get('/auth/sso/callback',async(req,res)=>{
+  res.set('Cache-Control','no-store');
+  if(!process.env.SSO_BRIDGE_SECRET)return res.status(503).send('Workspace sign-in is not configured for Contribute.');
+  const ticket=String(req.query.ticket||'');
+  if(!/^[a-zA-Z0-9_-]{43}$/.test(ticket))return res.status(400).send('Invalid sign-in link.');
+  try{
+    await ready;
+    const exchange=await fetch(identityBase+'/api/sso/contribute/exchange',{method:'POST',headers:{'Content-Type':'application/json','X-SignalFlow-Bridge':process.env.SSO_BRIDGE_SECRET},body:JSON.stringify({ticket}),signal:AbortSignal.timeout(12000)});
+    if(!exchange.ok)return res.status(403).send('Workspace sign-in was rejected or expired. Please return to My SignalFlow and try again.');
+    const {email}=await exchange.json();
+    if(typeof email!=='string'||!email.toLowerCase().endsWith('@blackcountryradio.co.uk'))return res.status(403).send('Workspace account required.');
+    const normalised=email.toLowerCase();
+    let user=await db.query('SELECT * FROM contribute_users WHERE email=$1',[normalised]);
+    if(!user.rows.length){
+      const salt=crypto.randomBytes(24).toString('hex');
+      const password=crypto.randomBytes(48).toString('base64url');
+      await db.query("INSERT INTO contribute_users(id,email,password_hash,salt,role,folders) VALUES($1,$2,$3,$4,'reporter',$5) ON CONFLICT(email) DO NOTHING",[crypto.randomUUID(),normalised,hashPassword(password,salt),salt,JSON.stringify(['local-news'])]);
+      user=await db.query('SELECT * FROM contribute_users WHERE email=$1',[normalised]);
+    }
+    if(!user.rows.length)return res.status(503).send('Could not prepare Contribute account.');
+    const token=crypto.randomBytes(32).toString('base64url');
+    await db.query("INSERT INTO contribute_sessions(token_hash,user_id,expires_at) VALUES($1,$2,NOW()+INTERVAL '12 hours')",[crypto.createHash('sha256').update(token).digest('hex'),user.rows[0].id]);
+    res.cookie('contribute_sso',token,{httpOnly:true,secure:true,sameSite:'lax',path:'/api/auth/sso-session',maxAge:60000});
+    res.redirect('/?sso=1');
+  }catch(e){console.error('Contribute SSO failed',e.message);res.status(503).send('Workspace sign-in temporarily unavailable. The existing password login is still available.')}
+});
+app.post('/api/auth/sso-session',async(req,res)=>{
+  res.set('Cache-Control','no-store');
+  const token=(req.headers.cookie||'').split(';').map(x=>x.trim()).find(x=>x.startsWith('contribute_sso='))?.slice('contribute_sso='.length);
+  res.clearCookie('contribute_sso',{httpOnly:true,secure:true,sameSite:'lax',path:'/api/auth/sso-session'});
+  if(!token)return res.status(401).json({error:'No pending Workspace sign-in'});
+  try{
+    await ready;
+    const q=await db.query('SELECT u.* FROM contribute_sessions s JOIN contribute_users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>NOW()',[crypto.createHash('sha256').update(token).digest('hex')]);
+    if(!q.rows.length)return res.status(401).json({error:'Sign-in expired'});
+    res.json({token,user:publicUser(q.rows[0])});
+  }catch(e){console.error('SSO session handoff failed',e.message);res.status(503).json({error:'Account unavailable'})}
+});
+
 const dropboxReady=()=>Boolean(process.env.DROPBOX_APP_KEY&&process.env.DROPBOX_APP_SECRET&&process.env.DROPBOX_REFRESH_TOKEN);
 const safeName=s=>String(s||"contribution").replace(/[^a-zA-Z0-9._ -]/g,"_").slice(0,90);
 const dropboxFolder=id=>({"local-news":"local news","sport":"sport","interviews":"interviews","photo":"photo","video":"video"})[id];
