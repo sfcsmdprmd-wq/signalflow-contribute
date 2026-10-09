@@ -36,7 +36,8 @@ async function session(req,res,next){
    if(req.user.auth_method==='sso'){
      if(!process.env.SSO_BRIDGE_SECRET)return res.status(503).json({error:'Workspace authorisation unavailable'});
      const check=await fetch(identityBase+'/api/sso/contribute/verify',{method:'POST',headers:{'Content-Type':'application/json','X-SignalFlow-Bridge':process.env.SSO_BRIDGE_SECRET},body:JSON.stringify({email:req.user.email}),signal:AbortSignal.timeout(12000)});
-     if(!check.ok){await db.query("DELETE FROM contribute_sessions WHERE token_hash=$1",[crypto.createHash('sha256').update(token).digest('hex')]);return res.status(401).json({error:'Workspace access removed or unavailable'})}
+     if(check.status===403){await db.query("DELETE FROM contribute_sessions WHERE token_hash=$1",[crypto.createHash('sha256').update(token).digest('hex')]);return res.status(401).json({error:'Workspace access removed'})}
+     if(!check.ok){console.error('Workspace verification failed with status',check.status);return res.status(503).json({error:'Unable to verify Workspace access. Please retry shortly.'})}
    }
  }
  next()}catch(e){console.error(e);res.status(503).json({error:"Account service unavailable"})}
