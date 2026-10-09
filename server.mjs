@@ -27,14 +27,13 @@ const publicUser=u=>({id:u.id,email:u.email,role:u.role,folders:mappedFolders(u.
 async function session(req,res,next){
  try{await ready;if(!db)return res.status(503).json({error:"Account database is not configured"});
  const token=req.get("Authorization")?.replace(/^Bearer /,"");if(!token)return res.status(401).json({error:"Please sign in"});
- const q=await db.query("SELECT u.* FROM contribute_sessions s JOIN contribute_users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>NOW()",[crypto.createHash("sha256").update(token).digest("hex")]);
+ const q=await db.query("SELECT u.*,s.auth_method FROM contribute_sessions s JOIN contribute_users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>NOW()",[crypto.createHash("sha256").update(token).digest("hex")]);
  if(!q.rows[0])return res.status(401).json({error:"Session expired. Please sign in again"});
  req.user=q.rows[0];
  // SSO sessions are revalidated against Workspace on every authenticated API call.
  // Existing password sessions are retained during migration.
  if(req.user.email?.endsWith('@blackcountryradio.co.uk')){
-   const sessionMeta=await db.query("SELECT auth_method FROM contribute_sessions WHERE token_hash=$1",[crypto.createHash('sha256').update(token).digest('hex')]).catch(()=>({rows:[]}));
-   if(sessionMeta.rows[0]?.auth_method==='sso'){
+   if(req.user.auth_method==='sso'){
      if(!process.env.SSO_BRIDGE_SECRET)return res.status(503).json({error:'Workspace authorisation unavailable'});
      const check=await fetch(identityBase+'/api/sso/contribute/verify',{method:'POST',headers:{'Content-Type':'application/json','X-SignalFlow-Bridge':process.env.SSO_BRIDGE_SECRET},body:JSON.stringify({email:req.user.email}),signal:AbortSignal.timeout(12000)});
      if(!check.ok){await db.query("DELETE FROM contribute_sessions WHERE token_hash=$1",[crypto.createHash('sha256').update(token).digest('hex')]);return res.status(401).json({error:'Workspace access removed or unavailable'})}
