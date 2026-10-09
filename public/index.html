@@ -16,7 +16,15 @@
 </div><nav id="appNav" class="hidden"><button class="navbtn active" onclick="show('home')">⌂<br>Home</button><button class="navbtn" onclick="loadFiles()">▤<br>My Files</button><button class="navbtn" onclick="logout()">↪<br>Sign out</button></nav>
 <script>
 let authToken=localStorage.getItem("contribute_token")||"";
-const api=(url,opts={})=>fetch(url,{...opts,headers:{...opts.headers,...(authToken?{Authorization:"Bearer "+authToken}:{})}});
+const api=async(url,opts={})=>{
+ const response=await fetch(url,{...opts,headers:{...opts.headers,...(authToken?{Authorization:"Bearer "+authToken}:{})}});
+ if(response.status===401||response.status===403){
+  authToken="";localStorage.removeItem("contribute_token");
+  $("appNav").classList.add("hidden");show("login");
+  $("loginError").textContent="Your session has expired or your Contribute access has been removed. Please sign in again.";
+ }
+ return response;
+};
 async function setupAdmin(){
  const r=await fetch("/api/auth/bootstrap",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({setupKey:$("setupKey").value,password:$("setupPassword").value})});
  const data=await r.json();if(!r.ok){$("setupError").textContent=data.error||"Setup failed";return}
@@ -130,5 +138,11 @@ async function createReporter(){
  if(r.ok){$('reporterEmail').value='';$('reporterPassword').value='';await loadAdmin()}
 }
 async function logout(){await api('/api/auth/logout',{method:'POST'}).catch(()=>{});authToken='';localStorage.removeItem('contribute_token');$('appNav').classList.add('hidden');show('login')}
+// Periodically recheck authorisation even while the app is sitting idle.
+setInterval(async()=>{
+ if(!authToken||document.visibilityState!=='visible')return;
+ try{await api("/api/config")}catch(e){}
+},30000);
+document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&authToken)api("/api/config").catch(()=>{})});
 init();
 </script></body></html>
