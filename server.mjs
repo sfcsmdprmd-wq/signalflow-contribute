@@ -5,6 +5,7 @@ import multer from "multer";
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
+import { spawn } from "node:child_process";
 const app=express(), PORT=process.env.PORT||3000;
 fs.mkdirSync("uploads",{recursive:true});
 const upload=multer({dest:"uploads/",limits:{fileSize:250*1024*1024}});
@@ -178,6 +179,18 @@ app.post("/api/admin/users",session,async(req,res)=>{
  const salt=crypto.randomBytes(24).toString("hex");
  try{const q=await db.query("INSERT INTO contribute_users(id,email,password_hash,salt,role,folders) VALUES($1,$2,$3,$4,'reporter',$5) RETURNING id,email,role,folders",[crypto.randomUUID(),email,hashPassword(password,salt),salt,JSON.stringify(folders)]);res.json(q.rows[0])}catch(e){res.status(409).json({error:"Email already registered"})}
 });
+// Decode audio by content, rather than trusting a browser-supplied filename or MIME type.
+async function convertAudioToWav(input, output){
+ await new Promise((resolve,reject)=>{
+  const ff=spawn("ffmpeg",["-nostdin","-hide_banner","-loglevel","error","-y","-i",input,"-map","0:a:0","-vn","-ac","2","-ar","44100","-c:a","pcm_s16le","-f","wav",output],{stdio:["ignore","ignore","pipe"]});
+  let details="";ff.stderr.on("data",chunk=>{details=(details+chunk.toString()).slice(-2000)});
+  ff.on("error",reject);ff.on("close",code=>code===0?resolve():reject(new Error("FFmpeg failed: "+details)));
+ });
+ const fd=fs.openSync(output,"r");
+ try{const header=Buffer.alloc(12);if(fs.readSync(fd,header,0,12,0)!==12||header.toString("ascii",0,4)!=="RIFF"||header.toString("ascii",8,12)!=="WAVE")throw new Error("Converted audio is not WAV")}finally{fs.closeSync(fd)}
+ const size=fs.statSync(output).size;if(size<=44||size>250*1024*1024)throw new Error("Converted audio is empty or exceeds the upload limit");
+ return size;
+}
 app.post("/api/upload",session,upload.single("file"),async(req,res)=>{
  const d=destinations.find(x=>x.id===req.body.destination);
  if(!d||!mappedFolders(req.user.folders).includes(d.id)){if(req.file)fs.unlinkSync(req.file.path);return res.status(403).json({error:"Destination not permitted"});}
@@ -187,13 +200,19 @@ app.post("/api/upload",session,upload.single("file"),async(req,res)=>{
  if(dropboxReady()){
   if(!req.file)return res.status(400).json({error:"File missing"});
 
+  const convertedPath=req.file.path+".wav";
   try{
-   const token=await dropboxToken(),ext=path.extname(req.file.originalname||"").slice(0,12),name=(cart?cart+"-":"")+Date.now()+"-"+crypto.randomBytes(5).toString("hex")+"-"+safeName(title||"contribution")+ext;
-   const receipt=await dropboxUpload(token,req.file.path,"/"+dropboxFolder(d.id)+"/"+name);
-   const item={id:crypto.randomUUID(),title:req.body.title||req.file.originalname,notes:req.body.notes||"",destination:d.name,type,size:req.file.size,deliveredAt:new Date().toISOString(),status:"Delivered to Dropbox",mock:false,dropboxId:receipt.id};
+   let localPath=req.file.path,actualSize=req.file.size;
+   if(type==="audio"){
+    actualSize=await convertAudioToWav(req.file.path,convertedPath);
+    localPath=convertedPath;
+   }
+   const token=await dropboxToken(),ext=type==="audio"?".wav":path.extname(req.file.originalname||"").slice(0,12),name=(cart?cart+"-":"")+Date.now()+"-"+crypto.randomBytes(5).toString("hex")+"-"+safeName(title||"contribution")+ext;
+   const receipt=await dropboxUpload(token,localPath,"/"+dropboxFolder(d.id)+"/"+name);
+   const item={id:crypto.randomUUID(),title:req.body.title||req.file.originalname,notes:req.body.notes||"",destination:d.name,type,size:actualSize,deliveredAt:new Date().toISOString(),status:"Delivered to Dropbox",mock:false,dropboxId:receipt.id};
    await db.query("INSERT INTO contribute_files(id,user_id,title,destination,type,size,delivered_at,dropbox_id,notes) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",[item.id,req.user.id,item.title,item.destination,item.type,item.size,item.deliveredAt,receipt.id,item.notes]);return res.json(item);
-  }catch(e){console.error("Dropbox delivery failed",e.message);return res.status(502).json({error:"Dropbox did not confirm delivery. Please retry."});}
-  finally{fs.unlinkSync(req.file.path)}
+  }catch(e){console.error("Dropbox delivery failed",e.message);return res.status(502).json({error:type==="audio"?"Audio conversion or Dropbox delivery failed. The recording was not marked delivered.":"Dropbox did not confirm delivery. Please retry."});}
+  finally{fs.rmSync(req.file.path,{force:true});fs.rmSync(convertedPath,{force:true})}
  }
  if(req.file)fs.unlinkSync(req.file.path);return res.status(503).json({error:"Dropbox is not yet configured"});
 });
